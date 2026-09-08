@@ -40,16 +40,21 @@ features:
   vlan:
     type: bool
     default: false
+    area:
+      points:
+        '2': 614.6
+        '3': -390.04
+        '4': -988.12
+      per: ports
 test:
-  # 上界点是八口配 64 条 CAM：48 位键并行比对，一次编译十几分钟。
-  # 上界的覆盖由价目表那一轮承担（它本来就要综合到上界），这里换成
-  # 32 条与「八口小表」两个点，门控与译码照样验得到。
   skip:
-  - {ports: 8, macEntries: 64}
-  - {macEntries: 64}
+  - ports: 8
+    macEntries: 64
+  - macEntries: 64
   extra:
-  - {macEntries: 32}
-  - {ports: 8, macEntries: 8}
+  - macEntries: 32
+  - ports: 8
+    macEntries: 8
 emit:
 - kind: bsv
   package: Eswitch
@@ -68,3 +73,49 @@ deps:
   hwcore: ^0.1
   amba: ^0.1
   emac: ^0.1
+area:
+  base:
+    points:
+      '2': 34497.96
+      '3': 43973.44
+      '4': 55221.04
+    per: ports
+  margin: 0.005
+  model: points-additive
+  error:
+    bound: 0.005
+    sign: over
+    note: parameter curves stored as measured points, features added on top, then
+      lifted by 0.005 so that no untested combination predicts under; the worst came
+      in -0.00 percent under before the lift
+  measured:
+  - at:
+      ports: 2
+      vlan: false
+    um2: 34497.96
+  - at:
+      ports: 3
+      vlan: false
+    um2: 43973.44
+  - at:
+      ports: 4
+      vlan: false
+    um2: 55221.04
+  - at:
+      ports: 2
+      vlan: true
+    um2: 35112.56
+  - at:
+      ports: 3
+      vlan: true
+    um2: 43583.4
+  - at:
+      ports: 4
+      vlan: true
+    um2: 54232.92
+  corner:
+    tool: ecc
+    pdk: ics55
+    freq_mhz: 100
+    measured: '2026-09-09'
+    gen_digest: sha256:bd37ff4c3d487ca5
