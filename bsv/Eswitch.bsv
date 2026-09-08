@@ -7,7 +7,7 @@ import ConfigReg::*;
 import RegIf::*;
 import RmiiTx::*;
 import RmiiRx::*;
-import MacTable::*;
+import Cam::*;
 import EswitchRegs::*;
 
 // 本包不认识任何总线：对外只给中立的 RegIf，接哪种总线由 wrap 或装配决定。
@@ -55,7 +55,9 @@ module mkEswitch#(EswitchCfg cfg)(EswitchIfc#(aw, dw, ports, macEntries))
 
   EswitchRegsIfc#(aw, dw, ports, macEntries) r <- mkEswitchRegs(
       EswitchRegsCfg { vlan: cfg.vlan });
-  MacTableIfc#(macEntries) tab <- mkMacTable;
+  // 学习表就是一张 CAM，跟将来的 TLB、cache 标签阵列同一个形状，
+  // 所以它住在 hwcore 而不是这里
+  Cam#(macEntries, Bit#(48), Bit#(8)) tab <- mkCam;
 
   Vector#(ports, RmiiTxIfc) txp <- replicateM(mkRmiiTx);
   Vector#(ports, RmiiRxIfc) rxp <- replicateM(mkRmiiRx);
@@ -156,9 +158,9 @@ module mkEswitch#(EswitchCfg cfg)(EswitchIfc#(aw, dw, ports, macEntries))
     Vector#(macEntries, Bit#(32)) hi = newVector;
     let d = tab.dump;
     for (Integer i = 0; i < valueOf(macEntries); i = i + 1) begin
-      lo[i] = d[i].mac[31:0];
-      hi[i] = {(d[i].valid ? 16'h8000 : 16'h0000) | zeroExtend(d[i].port),
-               d[i].mac[47:32]};
+      lo[i] = d[i].key[31:0];
+      hi[i] = {(d[i].valid ? 16'h8000 : 16'h0000) | zeroExtend(d[i].val),
+               d[i].key[47:32]};
     end
     r.maclo_in(lo);
     r.machi_in(hi);
