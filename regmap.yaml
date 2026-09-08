@@ -1,0 +1,54 @@
+ip: eswitch
+contract: { aw: 12, dw: 32 }
+base: 0x1000D000
+size: 0x1000
+params: [ports, macEntries]
+
+regs:
+  - name: ctrl
+    offset: 0x00
+    desc: control
+    fields:
+      - { name: en,    bits: "0:0", sw: rw, hw: r, reset: 0 }
+      - { name: learn, bits: "1:1", sw: rw, hw: r, reset: 1 }
+      - { name: flush, bits: "2:2", sw: rw, hw: r, reset: 0 }
+
+  - name: porten
+    offset: 0x04
+    desc: per port enable
+    fields: [ { name: val, width: ports, sw: rw, hw: r, reset: 0 } ]
+
+  - name: linkup
+    offset: 0x08
+    desc: per port link state, from hardware
+    fields: [ { name: val, width: ports, sw: r, hw: w, volatile: true } ]
+
+  - name: vlan
+    offset: 0x0C
+    desc: default VLAN id per switch
+    feature: vlan
+    fields: [ { name: val, bits: "11:0", sw: rw, hw: r, reset: 1 } ]
+
+  - name: maclo
+    offset: 0x100
+    desc: learned address, low 32 bits, one per table entry
+    array: { count: macEntries, stride: 8 }
+    fields: [ { name: val, width: 32, sw: r, hw: w, volatile: true } ]
+
+  - name: machi
+    offset: 0x104
+    desc: learned address high 16 bits, port and valid, one per table entry
+    array: { count: macEntries, stride: 8 }
+    fields: [ { name: val, width: 32, sw: r, hw: w, volatile: true } ]
+
+  - name: rxcnt
+    offset: 0x300
+    desc: frames received per port
+    array: { count: ports, stride: 4 }
+    fields: [ { name: val, width: 32, sw: r, hw: w, volatile: true } ]
+
+  - name: txcnt
+    offset: 0x340
+    desc: frames forwarded per port
+    array: { count: ports, stride: 4 }
+    fields: [ { name: val, width: 32, sw: r, hw: w, volatile: true } ]

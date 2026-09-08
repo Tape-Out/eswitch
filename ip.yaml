@@ -1,0 +1,60 @@
+name: eswitch
+version: 0.1.0
+spec: '0.1'
+kind: ip
+lang: bsv
+identity:
+  slug: eswitch-tapeout-bsv
+  display_name: Layer 2 Ethernet switch
+  summary: Cut through forwarding with a learned address table.
+  category: network
+  subcategories:
+  - ethernet
+  - switch
+  ip_family: eswitch
+  integration_profile:
+  - apb4-slave
+  maturity: planned
+contract:
+  version: 1
+  ctrl:
+    shape: flat
+    aw: 12
+    dw: 32
+params:
+  ports:
+    type: int
+    default: 4
+    range:
+    - 2
+    - 8
+    desc: 端口数
+  macEntries:
+    type: int
+    default: 16
+    range:
+    - 4
+    - 64
+    desc: 学习表条目数。这是 CAM，触发器加比较器，条目数直接决定面积
+features:
+  vlan:
+    type: bool
+    default: false
+emit:
+- kind: bsv
+  package: Eswitch
+  module: mkEswitch
+  config_type: EswitchCfg
+  interface: EswitchIfc
+  ctrl: regs
+  pins:
+  - name: pins
+    type: EswitchPins
+    targs:
+    - ports
+- kind: verilog-flat
+  bus: apb4
+deps:
+  hwcore: ^0.1
+  amba: ^0.1
+  emac: ^0.1
