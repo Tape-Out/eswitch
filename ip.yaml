@@ -80,42 +80,71 @@ area:
       '3': 43973.44
       '4': 55221.04
     per: ports
-  margin: 0.005
+  margin: 0.0533
   model: points-additive
   error:
-    bound: 0.005
+    bound: 0.043
     sign: over
-    note: parameter curves stored as measured points, features added on top, then
-      lifted by 0.005 so that no untested combination predicts under; the worst came
-      in -0.00 percent under before the lift
+    note: parameter curves stored as measured points, one knob at a time with the
+      rest at their defaults, then added; the worst under estimate found so far is
+      the cross point macEntries 24 with eight ports and VLAN on, which came in 4.31
+      percent under before the lift
   measured:
   - at:
       ports: 2
       vlan: false
+      macEntries: 16
     um2: 34497.96
   - at:
       ports: 3
       vlan: false
+      macEntries: 16
     um2: 43973.44
   - at:
       ports: 4
       vlan: false
+      macEntries: 16
     um2: 55221.04
   - at:
       ports: 2
       vlan: true
+      macEntries: 16
     um2: 35112.56
   - at:
       ports: 3
       vlan: true
+      macEntries: 16
     um2: 43583.4
   - at:
       ports: 4
       vlan: true
+      macEntries: 16
     um2: 54232.92
+  - at:
+      ports: 4
+      macEntries: 4
+      vlan: false
+    um2: 35329.0
+  - at:
+      ports: 4
+      macEntries: 32
+      vlan: false
+    um2: 79656.64
+  - at:
+      ports: 4
+      macEntries: 64
+      vlan: false
+    um2: 129417.96
   corner:
     tool: ecc
     pdk: ics55
     freq_mhz: 100
     measured: '2026-09-09'
     gen_digest: sha256:bd37ff4c3d487ca5
+  params:
+    macEntries:
+      points:
+        '4': -19892.04
+        '16': 0.0
+        '32': 24435.6
+        '64': 74196.92
