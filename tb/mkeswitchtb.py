@@ -1,4 +1,4 @@
-"""eswitch 的行为测试台：从两个口各灌一帧，看学习表把它们分别记在了哪个口。
+"""eswitch 的行为测试台：学习表记得对不对，以及帧到底转发到了哪几个口。
 
 激励源直接用 `mkRmiiTx`——它已经被 emac 的环回测过一遍，拿它造前导码、SFD
 与 CRC 比测试台自己再写一份可靠。选中的那个口收到它的两根线，其余口接地。
@@ -6,6 +6,10 @@
 学习表就是 hwcore 的那张 CAM。这一台验的正是它：两个不同的源地址要落进
 两个不同的槽，端口号各自记对，互不覆盖。表的转储寄存器 maclo/machi 步长 8、
 元素宽 4，顺带把数组译码也验了。
+
+转发这一条是「收尾」的判据：只验学习表是「记住了」，不是「交换」。
+数每个口 tx_en 拉高的拍数，两帧之间取一次快照，差值就是这一帧送到了哪些口。
+广播该泛洪到除入口外的每个口、且不从入口反射；目的地址已学到的单播只该走那一个口。
 
 认矩阵：`ports`、`macEntries`、`vlan` 从这一点的旋钮来。
 """
@@ -47,16 +51,21 @@ for i in range(NB):
     rows.append(f"      {i}: return (which == 0) ? 8'h{F0[i]:02X} "
                 f": 8'h{F1[i]:02X};")
 
+FWD = '    // 第一帧是广播：除入口（0 号）外每个口都该发，入口自己不该发。\n    if (mark[0] != 0) begin\n      $display("FAIL the broadcast came back out of the port it arrived on");\n      wrong = True;\n    end\n    if (mark[1] == 0) begin\n      $display("FAIL the broadcast never reached port 1");\n      wrong = True;\n    end\n    // 第二帧的目的地址已经学在 0 号口上：只该走 0 号。\n    if (txN[0] == mark[0]) begin\n      $display("FAIL the unicast never reached the port its address was learned on");\n      wrong = True;\n    end\n{p2}'
+P2 = '    if (txN[2] != mark[2]) begin\n      $display("FAIL the unicast was flooded to port 2 as well");\n      wrong = True;\n    end'
+
 if second:
     entry1 = f'''    if (lo1 != 32'h{word(B):08X} || hi1 != 32'h{hiword(B, 1):08X}) begin
       $display("FAIL entry 1 is %08h %08h, want %08h %08h",
                lo1, hi1, 32'h{word(B):08X}, 32'h{hiword(B, 1):08X});
       wrong = True;
     end'''
-    verdict = "two sources from two ports land in two slots with the right ports"
+    verdict = ("two sources from two ports land in two slots, a broadcast floods every port but the one it came in on, and a unicast to a learned address goes only there")
+    fwd = FWD.format(p2=(P2 if ports >= 3 else "    // 只有两个口，没有第三个口可以看有没有被泛洪到"))
 else:
     entry1 = "    // 只有一个口或一个槽，第二条学不进来"
     verdict = "a source is learned against the port it came in on"
+    fwd = "    // 只有一个口或一个槽，谈不上转发"
 
 txt = f'''package Eswitch{label}Tb;
 
@@ -100,6 +109,9 @@ module mkEswitch{label}Tb(Empty);
   Reg#(Bit#(32)) hi0 <- mkReg(0);
   Reg#(Bit#(32)) lo1 <- mkReg(0);
   Reg#(Bit#(32)) hi1 <- mkReg(0);
+  // 每个口发了多少拍，以及第一帧走完时的快照
+  Vector#({ports}, Reg#(Bit#(16))) txN <- replicateM(mkReg(0));
+  Vector#({ports}, Reg#(Bit#(16))) mark <- replicateM(mkReg(0));
 
   // 选中的口接激励源的两根线，其余口接地
   rule wirePorts;
@@ -108,6 +120,11 @@ module mkEswitch{label}Tb(Empty);
       d.pins.rx[p].wire_in(sel ? gen.pins.txd : 0,
                            sel ? gen.pins.tx_en : False, False);
     end
+  endrule
+
+  rule countTx;
+    for (Integer p = 0; p < valueOf({ports}); p = p + 1)
+      if (d.pins.tx[p].tx_en) txN[p] <= txN[p] + 1;
   endrule
 
   rule tick_;
@@ -144,6 +161,8 @@ module mkEswitch{label}Tb(Empty);
   // 整帧走完要前导码 8 字节加净荷加 FCS，每字节四拍，宽松等一等
   rule gap0 (ph == Gap0);
     if (s > 200) begin
+      for (Integer p = 0; p < valueOf({ports}); p = p + 1)
+        mark[p] <= txN[p];
       ph <= {"Send1" if second else "Read"};
       srcPort <= 1;
       which <= 1;
@@ -177,6 +196,7 @@ module mkEswitch{label}Tb(Empty);
       wrong = True;
     end
 {entry1}
+{fwd}
     if (wrong) $display("FAILED");
     else $display("PASS eswitch: {verdict}");
     $finish(wrong ? 1 : 0);
