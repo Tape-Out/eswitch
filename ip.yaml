@@ -42,9 +42,9 @@ features:
     default: false
     area:
       points:
-        '2': 614.6
-        '3': -390.04
-        '4': -988.12
+        '2': 889.28
+        '3': 435.96
+        '4': -410.2
       per: ports
 test:
   skip:
@@ -76,75 +76,76 @@ deps:
 area:
   base:
     points:
-      '2': 34497.96
-      '3': 43973.44
-      '4': 55221.04
+      '2': 33623.8
+      '3': 43411.76
+      '4': 54929.0
     per: ports
   margin: 0.0533
   model: points-additive
   error:
     bound: 0.043
     sign: over
-    note: parameter curves stored as measured points, one knob at a time with the
-      rest at their defaults, then added; the worst under estimate found so far is
-      the cross point macEntries 24 with eight ports and VLAN on, which came in 4.31
-      percent under before the lift
+    note: parameter curves stored as measured points, one knob at a time with 
+      the rest at their defaults, then added; the worst under estimate found so 
+      far is the cross point macEntries 24 with eight ports and VLAN on, which 
+      came in 4.31 percent under before the lift
   measured:
   - at:
       ports: 2
       vlan: false
       macEntries: 16
-    um2: 34497.96
+    um2: 33623.8
   - at:
       ports: 3
       vlan: false
       macEntries: 16
-    um2: 43973.44
+    um2: 43411.76
   - at:
       ports: 4
       vlan: false
       macEntries: 16
-    um2: 55221.04
+    um2: 54929.0
   - at:
       ports: 2
       vlan: true
       macEntries: 16
-    um2: 35112.56
+    um2: 34513.08
   - at:
       ports: 3
       vlan: true
       macEntries: 16
-    um2: 43583.4
+    um2: 43847.72
   - at:
       ports: 4
       vlan: true
       macEntries: 16
-    um2: 54232.92
+    um2: 54518.8
   - at:
       ports: 4
       macEntries: 4
       vlan: false
-    um2: 35329.0
+    um2: 34258.56
   - at:
       ports: 4
       macEntries: 32
       vlan: false
-    um2: 79656.64
+    um2: 80392.2
   - at:
       ports: 4
       macEntries: 64
       vlan: false
-    um2: 129417.96
+    um2: 131283.88
   corner:
     tool: ecc
     pdk: ics55
     freq_mhz: 100
-    measured: '2026-09-09'
-    gen_digest: sha256:bd37ff4c3d487ca5
+    measured: '2026-09-11'
+    toolchain: bsc 2026.01 · yosys 0.68+195 · ecc 0.1.0a11
+    gen_digest: sha256:b1345d95c794f6e0
   params:
     macEntries:
       points:
-        '4': -19892.04
+        '4': -20670.44
         '16': 0.0
-        '32': 24435.6
-        '64': 74196.92
+        '32': 25463.2
+        '64': 76354.88

@@ -95,7 +95,11 @@ module mkEswitch#(EswitchCfg cfg)(EswitchIfc#(aw, dw, ports, macEntries))
         if (hdr[p] == 11) begin
           // 收齐两个地址：学源、查目的，查不到就泛洪给其它开着的口
           Bit#(48) s = {src[p][39:0], c.dat};
-          if (r.ctrl_learn == 1) want[p].wset(tuple2(s, fromInteger(p)));
+          // 只为**单播**源地址建表项（802.1D 7.8）。组地址一旦进表，之后对它
+          // 的查表就会命中，本该泛洪的广播只发给一个口——而表还被白占一格。
+          // 地址按先到的字节排在高位，所以第一个字节的最低位（组位）是第 40 位。
+          if (r.ctrl_learn == 1 && s[40] == 0)
+            want[p].wset(tuple2(s, fromInteger(p)));
           let hit = tab.lookup(dst[p]);
           Bit#(8) m = case (hit) matches
                         tagged Valid .q: (8'h1 << q);

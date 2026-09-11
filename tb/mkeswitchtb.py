@@ -33,6 +33,8 @@ B = [0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE]
 TAIL = [0x08, 0x00, 0xA5, 0x5A, 0x5A, 0xA5]
 F0 = [0xFF] * 6 + A + TAIL
 F1 = A + B + TAIL
+# 第三帧：目的是 B，**源是广播**。桥不该为组地址建表项（802.1D 7.8）。
+F2 = B + [0xFF] * 6 + TAIL
 NB = len(F0)
 
 second = ports >= 2 and entries >= 2
@@ -49,7 +51,7 @@ def hiword(mac, port):
 rows = []
 for i in range(NB):
     rows.append(f"      {i}: return (which == 0) ? 8'h{F0[i]:02X} "
-                f": 8'h{F1[i]:02X};")
+                f": ((which == 1) ? 8'h{F1[i]:02X} : 8'h{F2[i]:02X});")
 
 FWD = '    // 第一帧是广播：除入口（0 号）外每个口都该发，入口自己不该发。\n    if (mark[0] != 0) begin\n      $display("FAIL the broadcast came back out of the port it arrived on");\n      wrong = True;\n    end\n    if (mark[1] == 0) begin\n      $display("FAIL the broadcast never reached port 1");\n      wrong = True;\n    end\n    // 第二帧的目的地址已经学在 0 号口上：只该走 0 号。\n    if (txN[0] == mark[0]) begin\n      $display("FAIL the unicast never reached the port its address was learned on");\n      wrong = True;\n    end\n{p2}'
 P2 = '    if (txN[2] != mark[2]) begin\n      $display("FAIL the unicast was flooded to port 2 as well");\n      wrong = True;\n    end'
@@ -81,10 +83,10 @@ import Eswitch::*;
 
 Integer nb = {NB};
 
-typedef enum {{ Setup, Send0, Gap0, Send1, Gap1, Read, Done }}
+typedef enum {{ Setup, Send0, Gap0, Send1, Gap1, Send2, Gap2, Read, Done }}
   Phase deriving (Bits, Eq);
 
-function Bit#(8) frameByte(Bit#(8) i, Bit#(1) which);
+function Bit#(8) frameByte(Bit#(8) i, Bit#(2) which);
   case (i)
 {chr(10).join(rows)}
     default: return 0;
@@ -102,13 +104,14 @@ module mkEswitch{label}Tb(Empty);
   Reg#(Bit#(8))  s   <- mkReg(0);
   Reg#(Bit#(8))  fi  <- mkReg(0);
   Reg#(Bit#(4))  srcPort <- mkReg(0);
-  Reg#(Bit#(1))  which <- mkReg(0);
+  Reg#(Bit#(2))  which <- mkReg(0);
   Reg#(Bit#(32)) cyc <- mkReg(0);
   Reg#(Bool)     bad <- mkReg(False);
   Reg#(Bit#(32)) lo0 <- mkReg(0);
   Reg#(Bit#(32)) hi0 <- mkReg(0);
   Reg#(Bit#(32)) lo1 <- mkReg(0);
   Reg#(Bit#(32)) hi1 <- mkReg(0);
+  Reg#(Bit#(32)) hi2 <- mkReg(0);   // 第三个槽，组地址不该落进来
   // 每个口发了多少拍，以及第一帧走完时的快照
   Vector#({ports}, Reg#(Bit#(16))) txN <- replicateM(mkReg(0));
   Vector#({ports}, Reg#(Bit#(16))) mark <- replicateM(mkReg(0));
@@ -150,11 +153,11 @@ module mkEswitch{label}Tb(Empty);
   endrule
 
   // 一帧一帧灌进去。最后一个字节带 last，发送器自己补 CRC。
-  rule feed (ph == Send0 || ph == Send1);
+  rule feed (ph == Send0 || ph == Send1 || ph == Send2);
     gen.tx.put(tuple2(frameByte(fi, which), fi == fromInteger(nb - 1)));
     if (fi + 1 == fromInteger(nb)) begin
       fi <= 0;
-      ph <= (ph == Send0) ? Gap0 : Gap1;
+      ph <= (ph == Send0) ? Gap0 : ((ph == Send1) ? Gap1 : Gap2);
     end else fi <= fi + 1;
   endrule
 
@@ -171,21 +174,31 @@ module mkEswitch{label}Tb(Empty);
   endrule
 
   rule gap1 (ph == Gap1);
+    if (s > 200) begin
+      ph <= Send2;
+      which <= 2;
+      srcPort <= 0;
+      s <= 0;
+    end else s <= s + 1;
+  endrule
+
+  rule gap2 (ph == Gap2);
     if (s > 200) begin ph <= Read; s <= 0; end
     else s <= s + 1;
   endrule
 
   rule read_ (ph == Read);
     Bit#(12) a = (s == 0) ? 12'h100 : ((s == 1) ? 12'h104
-               : ((s == 2) ? 12'h108 : 12'h10C));
+               : ((s == 2) ? 12'h108 : ((s == 3) ? 12'h10C : 12'h114)));
     let x <- d.regs.access(RegReq {{ addr: a, write: False,
                                      wdata: 0, wstrb: 4'hF }});
     if (s == 0) lo0 <= x.rdata;
     if (s == 1) hi0 <= x.rdata;
     if (s == 2) lo1 <= x.rdata;
     if (s == 3) hi1 <= x.rdata;
-    if (s == 3) ph <= Done;
-    if (s < 3) s <= s + 1; else s <= 0;
+    if (s == 4) hi2 <= x.rdata;
+    if (s == 4) ph <= Done;
+    if (s < 4) s <= s + 1; else s <= 0;
   endrule
 
   rule fin (ph == Done);
@@ -196,6 +209,12 @@ module mkEswitch{label}Tb(Empty);
       wrong = True;
     end
 {entry1}
+    // 802.1D 7.8：只为**单播**源地址建表项。源地址是组地址的帧不该进表——
+    // 进了表之后，对那个组地址的查表会命中，本该泛洪的广播就只发给一个口。
+    if (hi2[31] == 1) begin
+      $display("FAIL a frame with a group source address was learned: %08h", hi2);
+      wrong = True;
+    end
 {fwd}
     if (wrong) $display("FAILED");
     else $display("PASS eswitch: {verdict}");
