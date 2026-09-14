@@ -10,6 +10,8 @@
 转发这一条是「收尾」的判据：只验学习表是「记住了」，不是「交换」。
 数每个口 tx_en 拉高的拍数，两帧之间取一次快照，差值就是这一帧送到了哪些口。
 广播该泛洪到除入口外的每个口、且不从入口反射；目的地址已学到的单播只该走那一个口。
+最后关掉 1 号口再发一帧给学在它上面的地址：转发只许走开着的口（802.1D 7.7），
+这一帧哪儿都不该去，既不从关掉的口出去，也不改成泛洪。
 
 认矩阵：`ports`、`macEntries`、`vlan` 从这一点的旋钮来。
 """
@@ -35,6 +37,8 @@ F0 = [0xFF] * 6 + A + TAIL
 F1 = A + B + TAIL
 # 第三帧：目的是 B，**源是广播**。桥不该为组地址建表项（802.1D 7.8）。
 F2 = B + [0xFF] * 6 + TAIL
+# 第四帧：1 号口关掉之后，从 0 号口发往 B
+F3 = B + A + TAIL
 NB = len(F0)
 
 second = ports >= 2 and entries >= 2
@@ -51,10 +55,21 @@ def hiword(mac, port):
 rows = []
 for i in range(NB):
     rows.append(f"      {i}: return (which == 0) ? 8'h{F0[i]:02X} "
-                f": ((which == 1) ? 8'h{F1[i]:02X} : 8'h{F2[i]:02X});")
+                f": ((which == 1) ? 8'h{F1[i]:02X} "
+                f": ((which == 2) ? 8'h{F2[i]:02X} : 8'h{F3[i]:02X}));")
 
 FWD = '    // 第一帧是广播：除入口（0 号）外每个口都该发，入口自己不该发。\n    if (mark[0] != 0) begin\n      $display("FAIL the broadcast came back out of the port it arrived on");\n      wrong = True;\n    end\n    if (mark[1] == 0) begin\n      $display("FAIL the broadcast never reached port 1");\n      wrong = True;\n    end\n    // 第二帧的目的地址已经学在 0 号口上：只该走 0 号。\n    if (txN[0] == mark[0]) begin\n      $display("FAIL the unicast never reached the port its address was learned on");\n      wrong = True;\n    end\n{p2}'
 P2 = '    if (txN[2] != mark[2]) begin\n      $display("FAIL the unicast was flooded to port 2 as well");\n      wrong = True;\n    end'
+OFF = """    // 目的地址学在 1 号口上，而 1 号口已经关掉：这一帧哪儿都不该去。
+    if (txN[1] != mark2[1]) begin
+      $display("FAIL a unicast went out of port 1 after the port was disabled");
+      wrong = True;
+    end
+{p2}"""
+OFF2 = """    if (txN[2] != mark2[2]) begin
+      $display("FAIL a unicast to a disabled port was flooded to port 2 instead");
+      wrong = True;
+    end"""
 
 if second:
     entry1 = f'''    if (lo1 != 32'h{word(B):08X} || hi1 != 32'h{hiword(B, 1):08X}) begin
@@ -64,6 +79,7 @@ if second:
     end'''
     verdict = ("two sources from two ports land in two slots, a broadcast floods every port but the one it came in on, and a unicast to a learned address goes only there")
     fwd = FWD.format(p2=(P2 if ports >= 3 else "    // 只有两个口，没有第三个口可以看有没有被泛洪到"))
+    fwd += chr(10) + OFF.format(p2=(OFF2 if ports >= 3 else "    // 只有两个口，没有第三个口可以看有没有被泛洪到"))
 else:
     entry1 = "    // 只有一个口或一个槽，第二条学不进来"
     verdict = "a source is learned against the port it came in on"
@@ -83,7 +99,7 @@ import Eswitch::*;
 
 Integer nb = {NB};
 
-typedef enum {{ Setup, Send0, Gap0, Send1, Gap1, Send2, Gap2, Read, Done }}
+typedef enum {{ Setup, Send0, Gap0, Send1, Gap1, Send2, Gap2, Off, Send3, Gap3, Read, Done }}
   Phase deriving (Bits, Eq);
 
 function Bit#(8) frameByte(Bit#(8) i, Bit#(2) which);
@@ -115,6 +131,7 @@ module mkEswitch{label}Tb(Empty);
   // 每个口发了多少拍，以及第一帧走完时的快照
   Vector#({ports}, Reg#(Bit#(16))) txN <- replicateM(mkReg(0));
   Vector#({ports}, Reg#(Bit#(16))) mark <- replicateM(mkReg(0));
+  Vector#({ports}, Reg#(Bit#(16))) mark2 <- replicateM(mkReg(0));   // 关口之前
 
   // 选中的口接激励源的两根线，其余口接地
   rule wirePorts;
@@ -153,11 +170,11 @@ module mkEswitch{label}Tb(Empty);
   endrule
 
   // 一帧一帧灌进去。最后一个字节带 last，发送器自己补 CRC。
-  rule feed (ph == Send0 || ph == Send1 || ph == Send2);
+  rule feed (ph == Send0 || ph == Send1 || ph == Send2 || ph == Send3);
     gen.tx.put(tuple2(frameByte(fi, which), fi == fromInteger(nb - 1)));
     if (fi + 1 == fromInteger(nb)) begin
       fi <= 0;
-      ph <= (ph == Send0) ? Gap0 : ((ph == Send1) ? Gap1 : Gap2);
+      ph <= (ph == Send0) ? Gap0 : ((ph == Send1) ? Gap1 : ((ph == Send2) ? Gap2 : Gap3));
     end else fi <= fi + 1;
   endrule
 
@@ -183,6 +200,20 @@ module mkEswitch{label}Tb(Empty);
   endrule
 
   rule gap2 (ph == Gap2);
+    if (s > 200) begin ph <= {"Off" if second else "Read"}; s <= 0; end
+    else s <= s + 1;
+  endrule
+
+  rule portOff (ph == Off);
+    wr(12'h004, 32'hFFFFFFFD);   // 关掉 1 号口
+    for (Integer p = 0; p < valueOf({ports}); p = p + 1)
+      mark2[p] <= txN[p];
+    which <= 3;
+    srcPort <= 0;
+    ph <= Send3;
+  endrule
+
+  rule gap3 (ph == Gap3);
     if (s > 200) begin ph <= Read; s <= 0; end
     else s <= s + 1;
   endrule

@@ -105,7 +105,9 @@ module mkEswitch#(EswitchCfg cfg)(EswitchIfc#(aw, dw, ports, macEntries))
                         tagged Valid .q: (8'h1 << q);
                         default: (zeroExtend(r.porten));
                       endcase;
-          target = m & ~(8'h1 << p);   // 从不回送入口
+          // 命中那一支原来不看 porten：学在后来关掉的口上的地址，帧照样往那个口送，
+          // 而泛洪那一支看的正是 porten。转发只许走开着的口（802.1D 7.7）
+          target = m & zeroExtend(r.porten) & ~(8'h1 << p);   // 从不回送入口
           fan[p] <= target;
         end
       end
