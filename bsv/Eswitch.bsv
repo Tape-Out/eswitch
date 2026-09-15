@@ -153,10 +153,6 @@ module mkEswitch#(EswitchCfg cfg)(EswitchIfc#(aw, dw, ports, macEntries))
       sub <= sub + 1;
   endrule
 
-  // 表 8-6 的范围是 10 到 1000000 秒。寄存器照收（WARL 还没做），超出按两端算
-  Bit#(20) limit = (r.agetime < 10) ? 10
-                 : ((r.agetime > 1000000) ? 1000000 : r.agetime);
-
   // 学习与老化合成一条规则：表的写方法一拍只调一次。各口的请求收拢，一拍学一个；
   // 没有要学的就清一个过期的——老化的粒度是秒，晚一拍不差
   rule table_;
@@ -173,7 +169,7 @@ module mkEswitch#(EswitchCfg cfg)(EswitchIfc#(aw, dw, ports, macEntries))
     let d = tab.dump;
     Maybe#(UInt#(TLog#(macEntries))) stale = tagged Invalid;
     for (Integer i = 0; i < valueOf(macEntries); i = i + 1)
-      if (!isValid(stale) && d[i].valid && now - seen[i] >= limit)
+      if (!isValid(stale) && d[i].valid && now - seen[i] >= r.agetime)
         stale = tagged Valid (fromInteger(i));
     if (got) begin
       // 建立与更新都算：重新学到同一个地址时 place 给的是它原来那一槽

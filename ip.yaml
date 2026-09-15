@@ -42,9 +42,9 @@ features:
     default: false
     area:
       points:
-        '2': 66.36
-        '3': 666.4
-        '4': 695.52
+        '2': 495.6
+        '3': 897.12
+        '4': -1398.88
       per: ports
 test:
   skip:
@@ -76,9 +76,9 @@ deps:
 area:
   base:
     points:
-      '2': 42198.24
-      '3': 53092.76
-      '4': 63122.08
+      '2': 42283.92
+      '3': 53598.44
+      '4': 64802.92
     per: ports
   margin: 0.0533
   model: points-additive
@@ -94,58 +94,58 @@ area:
       ports: 2
       vlan: false
       macEntries: 16
-    um2: 42198.24
+    um2: 42283.92
   - at:
       ports: 3
       vlan: false
       macEntries: 16
-    um2: 53092.76
+    um2: 53598.44
   - at:
       ports: 4
       vlan: false
       macEntries: 16
-    um2: 63122.08
+    um2: 64802.92
   - at:
       ports: 2
       vlan: true
       macEntries: 16
-    um2: 42264.6
+    um2: 42779.52
   - at:
       ports: 3
       vlan: true
       macEntries: 16
-    um2: 53759.16
+    um2: 54495.56
   - at:
       ports: 4
       vlan: true
       macEntries: 16
-    um2: 63817.6
+    um2: 63404.04
   - at:
       ports: 4
       macEntries: 4
       vlan: false
-    um2: 37340.52
+    um2: 37600.92
   - at:
       ports: 4
       macEntries: 32
       vlan: false
-    um2: 97991.04
+    um2: 99758.4
   - at:
       ports: 4
       macEntries: 64
       vlan: false
-    um2: 161468.16
+    um2: 166083.4
   corner:
     tool: ecc
     pdk: ics55
     freq_mhz: 100
     measured: '2026-09-15'
     toolchain: bsc 2026.01 · yosys 0.68+195 · ecc 0.1.0a11
-    gen_digest: sha256:846a540ac9c029ef
+    gen_digest: sha256:5581f1a8b2767d46
   params:
     macEntries:
       points:
-        '4': -25781.56
+        '4': -27202.0
         '16': 0.0
-        '32': 34868.96
-        '64': 98346.08
+        '32': 34955.48
+        '64': 101280.48

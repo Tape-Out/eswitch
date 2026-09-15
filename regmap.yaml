@@ -34,7 +34,7 @@ regs:
   - name: agetime
     offset: 0x10
     desc: ageing time of learned entries, in seconds
-    fields: [ { name: val, width: 20, sw: rw, hw: r, reset: 300 } ]
+    fields: [ { name: val, width: 20, sw: rw, hw: r, reset: 300, legal: [ { min: 10, max: 1000000 } ] } ]
 
   # 一秒有多少拍减一。拍数取决于装配的时钟，复位按 100 MHz
   - name: tick

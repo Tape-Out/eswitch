@@ -114,10 +114,11 @@ AGE = f'''
     case (s)
       0: wr(12'h004, 32'hFFFFFFFF);          // 1 号口开回来
       1: wr(12'h014, {SEC - 1});             // 一秒 {SEC} 拍
-      2: wr(12'h010, 5);                     // 范围外，按下限算成 10 秒
+      2: wr(12'h010, 10);                    // 下限
+      3: wr(12'h010, 5);                     // 范围外：agetime 是 WARL，这一笔不算数，仍按 10 秒老化
       default: begin ph <= AgeSendC; which <= 4; srcPort <= 2; end
     endcase
-    if (s < 3) s <= s + 1; else s <= 0;
+    if (s < 4) s <= s + 1; else s <= 0;
   endrule
 
   rule ageGapC (ph == AgeGapC);
