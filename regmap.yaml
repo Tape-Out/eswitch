@@ -29,6 +29,19 @@ regs:
     feature: vlan
     fields: [ { name: val, bits: "11:0", sw: rw, hw: r, reset: 1 } ]
 
+  # 802.1Q 8.8.3 与表 8-6：老化时间，单位秒，范围 10 到 1000000，默认 300。
+  # 超出范围按两端算（寄存器照收，WARL 还没做）
+  - name: agetime
+    offset: 0x10
+    desc: ageing time of learned entries, in seconds
+    fields: [ { name: val, width: 20, sw: rw, hw: r, reset: 300 } ]
+
+  # 一秒有多少拍减一。拍数取决于装配的时钟，复位按 100 MHz
+  - name: tick
+    offset: 0x14
+    desc: clock cycles per second, minus one
+    fields: [ { name: val, width: 32, sw: rw, hw: r, reset: 99999999 } ]
+
   - name: maclo
     offset: 0x100
     desc: learned address, low 32 bits, one per table entry

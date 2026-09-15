@@ -51,7 +51,7 @@ function RmiiRxPins getRxPins(RmiiRxIfc i) = i.pins;
 module mkEswitch#(EswitchCfg cfg)(EswitchIfc#(aw, dw, ports, macEntries))
     provisos (Mul#(TDiv#(dw, 8), 8, dw), Add#(_a, 12, aw), Add#(_b, 1, dw),
               Add#(_c, ports, dw), Add#(_d, 32, dw), Add#(_e, 12, dw),
-              Add#(_f, ports, 8), Log#(TAdd#(macEntries, 1), _g));
+              Add#(_f, ports, 8), Log#(TAdd#(macEntries, 1), _g), Add#(_h, 20, dw));
 
   EswitchRegsIfc#(aw, dw, ports, macEntries) r <- mkEswitchRegs(
       EswitchRegsCfg { vlan: cfg.vlan });
@@ -76,6 +76,13 @@ module mkEswitch#(EswitchCfg cfg)(EswitchIfc#(aw, dw, ports, macEntries))
   // 计数器留在本包里，寄存器组那边只是每拍读一眼
   Vector#(ports, Reg#(Bit#(32))) rxn <- replicateM(mkReg(0));
   Vector#(ports, Reg#(Bit#(32))) txn <- replicateM(mkReg(0));
+
+  // 802.1Q 8.8.3：动态表项从建立或最后一次更新起过了老化时间就删掉；UNH-IOL 按 ±1 秒验。
+  // 两位扫描（每半个周期年龄加一）的误差是半个到一个老化周期，达不到，所以每槽记下
+  // 最后一次学到它的秒数，与全局秒计数相减。20 位装得下 1000000 秒，差在 20 位上取模也对
+  Reg#(Bit#(32)) sub  <- mkReg(0);
+  Reg#(Bit#(20)) now  <- mkReg(0);
+  Vector#(macEntries, Reg#(Bit#(20))) seen <- replicateM(mkReg(0));
 
   for (Integer p = 0; p < valueOf(ports); p = p + 1) begin
     rule ingress (r.ctrl_en == 1 && r.porten[p] == 1);
@@ -137,18 +144,43 @@ module mkEswitch#(EswitchCfg cfg)(EswitchIfc#(aw, dw, ports, macEntries))
     endrule
   end
 
-  // 学习也一样只调一次：把各口的请求收拢，一拍学一个
-  rule learner (r.ctrl_learn == 1);
+  // 一秒有多少拍取决于装配的时钟，所以做成寄存器
+  rule second;
+    if (sub >= r.tick) begin
+      sub <= 0;
+      now <= now + 1;
+    end else
+      sub <= sub + 1;
+  endrule
+
+  // 表 8-6 的范围是 10 到 1000000 秒。寄存器照收（WARL 还没做），超出按两端算
+  Bit#(20) limit = (r.agetime < 10) ? 10
+                 : ((r.agetime > 1000000) ? 1000000 : r.agetime);
+
+  // 学习与老化合成一条规则：表的写方法一拍只调一次。各口的请求收拢，一拍学一个；
+  // 没有要学的就清一个过期的——老化的粒度是秒，晚一拍不差
+  rule table_;
     Bool got = False;
     Bit#(48) m = 0;
     Bit#(8)  q = 0;
-    for (Integer i = 0; i < valueOf(ports); i = i + 1)
-      if (!got &&& want[i].wget matches tagged Valid {.mm, .qq}) begin
-        m = mm;
-        q = qq;
-        got = True;
-      end
-    if (got) tab.learn(m, q);
+    if (r.ctrl_learn == 1)
+      for (Integer i = 0; i < valueOf(ports); i = i + 1)
+        if (!got &&& want[i].wget matches tagged Valid {.mm, .qq}) begin
+          m = mm;
+          q = qq;
+          got = True;
+        end
+    let d = tab.dump;
+    Maybe#(UInt#(TLog#(macEntries))) stale = tagged Invalid;
+    for (Integer i = 0; i < valueOf(macEntries); i = i + 1)
+      if (!isValid(stale) && d[i].valid && now - seen[i] >= limit)
+        stale = tagged Valid (fromInteger(i));
+    if (got) begin
+      // 建立与更新都算：重新学到同一个地址时 place 给的是它原来那一槽
+      seen[tab.place(m)] <= now;
+      tab.learn(m, q);
+    end else if (stale matches tagged Valid .i)
+      tab.clearAt(i);
   endrule
 
   rule flush (r.ctrl_flush == 1);
