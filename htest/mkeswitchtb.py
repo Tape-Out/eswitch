@@ -206,7 +206,7 @@ import RmiiTx::*;
 import RmiiRx::*;
 import Eswitch::*;
 
-// 由 tb/mkeswitchtb.py 生成，勿手改。
+// 由 htest/mkeswitchtb.py 生成，勿手改。
 // 这一点：ports={ports} macEntries={entries} vlan={vlan}
 
 Integer nb = {NB};
