@@ -13,6 +13,13 @@
 最后关掉 1 号口再发一帧给学在它上面的地址：转发只许走开着的口（802.1D 7.7），
 这一帧哪儿都不该去，既不从关掉的口出去，也不改成泛洪。
 
+转出去的帧要与收到的逐字节相同：0 号与 1 号出口各挂一个 `mkRmiiRx` 当监视器，收到的第一帧
+按字节对照原帧，长度是原帧加四字节 FCS，FCS 要对。只数 `tx_en` 的拍数看不出帧头被截掉、
+FCS 被补了两遍这类毛病，它们都在这一版之前真出现过。
+
+VLAN（`vlan` 开着且三个口以上）：把 0 号入口到 2 号出口隔开，再从 0 号口发广播，1 号口要收到、
+2 号口不许收到。
+
 老化（802.1Q 8.8.3，只在三个口以上的点上跑）：把「一秒」调成 500 拍、老化时间写 5
 （范围外，按下限算成 10 秒）。2 号口学到 C 之后，每秒从 0 号口给 C 发一帧，第一次泛洪到
 1 号口的那一帧离 C 被学到要在 8 到 12 秒之间——UNH-IOL 的验收是 ±1 秒，每秒探一次再加上
@@ -56,6 +63,7 @@ NB = len(FRAMES[0])
 
 second = ports >= 2 and entries >= 2
 ageing = ports >= 3
+iso = vlan and ports >= 3
 SEC = 500               # 测试台里的「一秒」
 LO, HI = 8 * SEC, 12 * SEC
 
@@ -191,8 +199,20 @@ AGE = f'''
   endrule
 ''' if ageing else ""
 
+ISOCHK = """    if (mark5[1] == mark4[1]) begin
+      $display("FAIL with port 2 isolated from port 0, a broadcast from port 0 never reached port 1");
+      wrong = True;
+    end
+    if (mark5[2] != mark4[2]) begin
+      $display("FAIL a broadcast from port 0 reached port 2, which is isolated from it");
+      wrong = True;
+    end""" if iso else "    // VLAN 关着或不到三个口，没有隔离可验"
+if iso:
+    verdict += ", an isolated egress port gets nothing from the ingress port it is isolated from"
+verdict += ", and every forwarded frame leaves byte for byte with its fcs"
+
 after_read = "AgeCfg" if ageing else "Done"
-feed_phases = "ph == Send0 || ph == Send1 || ph == Send2 || ph == Send3" + (
+feed_phases = "ph == Send0 || ph == Send1 || ph == Send2 || ph == Send3 || ph == SendIso" + (
     " || ph == AgeSendC || ph == AgeProbe || ph == RefSendD || ph == RefSendE || ph == RefLoopE || ph == RefLoopD"
     if ageing else "")
 
@@ -211,7 +231,8 @@ import Eswitch::*;
 
 Integer nb = {NB};
 
-typedef enum {{ Setup, Send0, Gap0, Send1, Gap1, Send2, Gap2, Off, Send3, Gap3, Read,
+typedef enum {{ Setup, Send0, Gap0, Send1, Gap1, Send2, Gap2, Off, Send3, Gap3,
+               IsoOn, SendIso, GapIso, IsoOff, Read,
                AgeCfg, AgeSendC, AgeGapC, AgeProbe, AgeWait, AgeChk,
                RefSendD, RefGapD, RefSendE, RefGapE, RefLoopE, RefWaitE, RefLoopD, RefWaitD, RefChk,
                Done }}
@@ -231,6 +252,7 @@ function Phase afterFrame(Phase p);
     Send1: return Gap1;
     Send2: return Gap2;
     Send3: return Gap3;
+    SendIso: return GapIso;
     AgeSendC: return AgeGapC;
     AgeProbe: return AgeWait;
     RefSendD: return RefGapD;
@@ -272,6 +294,42 @@ module mkEswitch{label}Tb(Empty);
   Reg#(Bit#(16)) markR  <- mkReg(0);
   Reg#(Bit#(32)) iStart <- mkReg(0);
   Reg#(Bit#(8))  k15    <- mkReg(0);
+  Vector#({ports}, Reg#(Bit#(16))) mark4 <- replicateM(mkReg(0));
+  Vector#({ports}, Reg#(Bit#(16))) mark5 <- replicateM(mkReg(0));
+
+  // 出口监视器：0 号口收到的第一帧应是第二帧（1 号口进、发往 A），1 号口收到的第一帧
+  // 应是第一帧（广播）
+  Vector#(2, RmiiRxIfc) mon   <- replicateM(mkRmiiRx);
+  Vector#(2, Reg#(Bit#(8))) mn    <- replicateM(mkReg(0));
+  Vector#(2, Reg#(Bool))    mdone <- replicateM(mkReg(False));
+  Vector#(2, Reg#(Bool))    mok   <- replicateM(mkReg(True));
+
+  rule monWire;
+    for (Integer m = 0; m < 2; m = m + 1)
+      mon[m].pins.wire_in(d.pins.tx[m].txd, d.pins.tx[m].tx_en, False);
+  endrule
+
+  for (Integer m = 0; m < 2; m = m + 1)
+    rule monRx;
+      let b <- mon[m].rx.get;
+      if (!mdone[m]) begin
+        if (b.last) begin
+          mdone[m] <= True;
+          if (!b.fcsOk || mn[m] != fromInteger(nb + 4)) begin
+            $display("FAIL port %0d sent %0d bytes, fcs %0d; want %0d bytes and a good fcs",
+                     m, mn[m], b.fcsOk, nb + 4);
+            mok[m] <= False;
+          end
+        end else begin
+          if (mn[m] < fromInteger(nb) && b.dat != frameByte(mn[m], (m == 0) ? 1 : 0)) begin
+            $display("FAIL port %0d byte %0d is %02h, want %02h", m, mn[m], b.dat,
+                     frameByte(mn[m], (m == 0) ? 1 : 0));
+            mok[m] <= False;
+          end
+          mn[m] <= mn[m] + 1;
+        end
+      end
+    endrule
 
   // 选中的口接激励源的两根线，其余口接地
   rule wirePorts;
@@ -364,9 +422,39 @@ module mkEswitch{label}Tb(Empty);
     if (s > 200) begin
       for (Integer p = 0; p < valueOf({ports}); p = p + 1)
         mark3[p] <= txN[p];
-      ph <= Read;
+      ph <= {"IsoOn" if iso else "Read"};
       s <= 0;
     end else s <= s + 1;
+  endrule
+
+  // VLAN：隔开 0 号入口与 2 号出口，并把 1 号口重新打开当对照
+  rule isoOn (ph == IsoOn);
+    case (s)
+      0: wr(12'h004, 32'hFFFFFFFF);
+      1: wr(12'h3C0, 32'h00000004);
+      default: begin
+        for (Integer p = 0; p < valueOf({ports}); p = p + 1)
+          mark4[p] <= txN[p];
+        which <= 0;
+        srcPort <= 0;
+        ph <= SendIso;
+      end
+    endcase
+    if (s < 2) s <= s + 1; else s <= 0;
+  endrule
+
+  rule gapIso (ph == GapIso);
+    if (s > 200) begin
+      for (Integer p = 0; p < valueOf({ports}); p = p + 1)
+        mark5[p] <= txN[p];
+      ph <= IsoOff;
+      s <= 0;
+    end else s <= s + 1;
+  endrule
+
+  rule isoOff (ph == IsoOff);
+    wr(12'h3C0, 32'h00000000);
+    ph <= Read;
   endrule
 
   rule read_ (ph == Read);
@@ -398,6 +486,12 @@ module mkEswitch{label}Tb(Empty);
       wrong = True;
     end
 {fwd}
+    for (Integer m = 0; m < 2; m = m + 1)
+      if (!mdone[m] || !mok[m]) begin
+        $display("FAIL port %0d did not send its first frame byte for byte", m);
+        wrong = True;
+      end
+{ISOCHK}
     if (wrong) $display("FAILED");
     else $display("PASS eswitch: {verdict}");
     $finish(wrong ? 1 : 0);

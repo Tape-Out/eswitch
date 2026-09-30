@@ -5,29 +5,24 @@ size: 0x1000
 params: [ports, macEntries]
 
 regs:
+  # 复位即转发、所有口开着：焊上板子不接管理口也能用
   - name: ctrl
     offset: 0x00
     desc: control
     fields:
-      - { name: en,    bits: "0:0", sw: rw, hw: r, reset: 0 }
+      - { name: en,    bits: "0:0", sw: rw, hw: r, reset: 1 }
       - { name: learn, bits: "1:1", sw: rw, hw: r, reset: 1 }
       - { name: flush, bits: "2:2", sw: rw, hw: r, reset: 0 }
 
   - name: porten
     offset: 0x04
     desc: per port enable
-    fields: [ { name: val, width: ports, sw: rw, hw: r, reset: 0 } ]
+    fields: [ { name: val, width: ports, sw: rw, hw: r, reset: -1 } ]
 
   - name: linkup
     offset: 0x08
     desc: per port link state, from hardware
     fields: [ { name: val, width: ports, sw: r, hw: w, volatile: true } ]
-
-  - name: vlan
-    offset: 0x0C
-    desc: default VLAN id per switch
-    feature: vlan
-    fields: [ { name: val, bits: "11:0", sw: rw, hw: r, reset: 1 } ]
 
   # 802.1Q 8.8.3 与表 8-6：老化时间，单位秒，范围 10 到 1000000，默认 300。
   # 超出范围按两端算（寄存器照收，WARL 还没做）
@@ -65,3 +60,18 @@ regs:
     desc: frames forwarded per port
     array: { count: ports, stride: 4 }
     fields: [ { name: val, width: 32, sw: r, hw: w, volatile: true } ]
+
+  - name: drops
+    offset: 0x380
+    desc: frames per ingress port that missed an egress port because another frame held it
+    array: { count: ports, stride: 4 }
+    fields: [ { name: val, width: 32, sw: r, hw: w, volatile: true } ]
+
+  # 端口隔离式 VLAN：第 p 项里置 1 的出口，不许从 p 号入口转发过去。复位全 0，所有口互通；
+  # 两组口互相置上，就分成两个广播域
+  - name: isol
+    offset: 0x3C0
+    desc: egress ports each ingress port must not forward to
+    feature: vlan
+    array: { count: ports, stride: 4 }
+    fields: [ { name: val, width: ports, sw: rw, hw: r, reset: 0 } ]
