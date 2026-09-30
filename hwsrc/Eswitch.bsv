@@ -55,7 +55,8 @@ function RmiiRxPins getRxPins(RmiiRxIfc i) = i.pins;
 module mkEswitch#(EswitchCfg cfg)(EswitchIfc#(aw, dw, ports, macEntries))
     provisos (Mul#(TDiv#(dw, 8), 8, dw), Add#(_a, 12, aw), Add#(_b, 1, dw),
               Add#(_c, ports, dw), Add#(_d, 32, dw), Add#(_e, 12, dw),
-              Add#(_f, ports, 8), Log#(TAdd#(macEntries, 1), _g), Add#(_h, 20, dw));
+              Add#(_f, ports, 8), Log#(TAdd#(macEntries, 1), _g), Add#(_h, 20, dw),
+              Add#(_i, TLog#(macEntries), TLog#(TAdd#(1, macEntries))));
 
   EswitchRegsIfc#(aw, dw, ports, macEntries) r <- mkEswitchRegs(
       EswitchRegsCfg { vlan: cfg.vlan });
@@ -159,21 +160,21 @@ module mkEswitch#(EswitchCfg cfg)(EswitchIfc#(aw, dw, ports, macEntries))
     endrule
   end
 
-  // 一拍裁一个入口，轮转。出口正被别的帧占着就不给，这一帧在那个出口上丢掉
+  // 一拍裁一个入口，轮转。出口正被别的帧占着就不给，这一帧在那个出口上丢掉。
+  // 请求向量从 rr 转起，最低的置位就是轮到的。写成一长串前后依赖的 if 也对，但展开成树
+  // 是指数级的：8 口时 bsc 在 transform 一步停不下来
   rule arbitrate;
-    Maybe#(Bit#(3)) sel = tagged Invalid;
-    for (Integer i = 0; i < valueOf(ports); i = i + 1) begin
-      Bit#(4) w4 = zeroExtend(rr) + fromInteger(i);
-      if (w4 >= fromInteger(valueOf(ports))) w4 = w4 - fromInteger(valueOf(ports));
-      Bit#(3) w = truncate(w4);
-      for (Integer q = 0; q < valueOf(ports); q = q + 1)
-        if (!isValid(sel) && w == fromInteger(q) && reqQ[q].notEmpty && decQ[q].notFull)
-          sel = tagged Valid w;
+    Bit#(8) want = 0;
+    Vector#(ports, Bit#(8)) asks = newVector;
+    for (Integer q = 0; q < valueOf(ports); q = q + 1) begin
+      if (reqQ[q].notEmpty && decQ[q].notFull) want[q] = 1;
+      asks[q] = reqQ[q].first;
     end
-    if (sel matches tagged Valid .s) begin
-      Bit#(8) ask = 0;
-      for (Integer q = 0; q < valueOf(ports); q = q + 1)
-        if (s == fromInteger(q)) ask = reqQ[q].first;
+    Bit#(16) two = {want, want};
+    Bit#(8) rot = truncate(two >> rr);
+    if (rot != 0) begin
+      Bit#(3) s = rr + truncate(pack(countZerosLSB(rot)));
+      Bit#(8) ask = asks[s];
       Bit#(8) busy = 0;
       for (Integer e = 0; e < valueOf(ports); e = e + 1)
         if (gnt[e] != rel[e]) busy[e] = 1;
@@ -189,8 +190,8 @@ module mkEswitch#(EswitchCfg cfg)(EswitchIfc#(aw, dw, ports, macEntries))
           decQ[q].enq(g);
           if (g != ask) dropn[q] <= dropn[q] + 1;
         end
-      Bit#(4) s4 = zeroExtend(s);
-      rr <= (s4 + 1 >= fromInteger(valueOf(ports))) ? 0 : s + 1;
+      // 转到下一个口；口不满 8 个时越过的那几位恒为 0，照样转回 0 号
+      rr <= s + 1;
     end
   endrule
 
@@ -248,16 +249,16 @@ module mkEswitch#(EswitchCfg cfg)(EswitchIfc#(aw, dw, ports, macEntries))
           got = True;
         end
     let d = tab.dump;
-    Maybe#(UInt#(TLog#(macEntries))) stale = tagged Invalid;
+    // 过期的槽：先各自判，再取最低的那一个，不写成一串前后依赖的 if（同上，64 条时编不动）
+    Bit#(macEntries) old = 0;
     for (Integer i = 0; i < valueOf(macEntries); i = i + 1)
-      if (!isValid(stale) && d[i].valid && now - seen[i] >= r.agetime)
-        stale = tagged Valid (fromInteger(i));
+      if (d[i].valid && now - seen[i] >= r.agetime) old[i] = 1;
     if (got) begin
       // 建立与更新都算：重新学到同一个地址时 place 给的是它原来那一槽
       seen[tab.place(m)] <= now;
       tab.learn(m, q);
-    end else if (stale matches tagged Valid .i)
-      tab.clearAt(i);
+    end else if (old != 0)
+      tab.clearAt(truncate(countZerosLSB(old)));
   endrule
 
   rule flush (r.ctrl_flush == 1);
